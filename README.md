@@ -103,11 +103,41 @@ TOOL_LLM_NAME=deepseek-v4-flash
    uv run app --host 0.0.0.0 --port 8080
    ```
 
-3. 另开终端，运行测试客户端：
+3. 另开终端，运行硬编码测试客户端（备份参考）：
 
    ```bash
    uv run python app/test_client.py
    ```
+
+### Orchestrator Agent（调度 Agent）
+
+`cli_agent.py` 是一个基于 LLM 的通用调度 Agent（Orchestrator），展示 A2A 协议的核心用法——**Agent 与 Agent 通信**。
+
+```
+用户 (CLI)  ←→  Orchestrator Agent (LLM 驱动)
+                     │ 通过 A2A 协议 + JSON-RPC
+                     ↓
+              Currency Agent Server  (app/__main__.py)
+```
+
+其工作流程：
+
+1. 启动时通过 `A2ACardResolver` 拉取远程 Server 的 **Agent Card**，自动发现其能力（名称、描述、技能列表、支持的输入输出格式）
+2. 将 Agent Card 中的能力描述注入 LLM 的 system prompt
+3. 注册一个 Tool `call_a2a_agent`，负责将自然语言包装为 A2A JSON-RPC 请求发给远程 Server
+4. 在 CLI 中与用户自然语言交互，判断请求是否匹配远程 Agent 的能力范围，智能决定是否调度
+
+启动方式：
+
+```bash
+# 默认连接 http://localhost:10000
+uv run python app/cli_agent.py
+
+# 指定远程 A2A Server 地址
+A2A_SERVER_URL=http://localhost:8080 uv run python app/cli_agent.py
+```
+
+> 该调度 Agent 和 Server 使用相同环境变量（`model_source` / `GOOGLE_API_KEY` / `TOOL_LLM_URL` / `TOOL_LLM_NAME` / `API_KEY`）。
 
 ## 构建容器镜像
 
