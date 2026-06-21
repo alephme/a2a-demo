@@ -83,7 +83,7 @@ TOOL_LLM_URL=https://api.deepseek.com
 TOOL_LLM_NAME=deepseek-v4-flash
 ```
 
-## 启动运行
+## 快速启动
 
 1. 安装依赖：
 
@@ -103,10 +103,15 @@ TOOL_LLM_NAME=deepseek-v4-flash
    uv run app --host 0.0.0.0 --port 8080
    ```
 
-3. 另开终端，运行硬编码测试客户端（备份参考）：
+3. 另开终端，运行客户端：
 
    ```bash
+   #硬编码测试客户端
    uv run python app/test_client.py
+   ```
+   ```bash
+   #硬编码测试客户端
+   uv run python app/cli_agent.py
    ```
 
 ### Orchestrator Agent（调度 Agent）
