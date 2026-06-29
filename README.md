@@ -103,15 +103,20 @@ TOOL_LLM_NAME=deepseek-v4-flash
    uv run app --host 0.0.0.0 --port 8080
    ```
 
-3. 另开终端，运行客户端：
+3. （可选）启动模拟交易 Agent（默认端口 10001）：
 
    ```bash
-   #硬编码测试客户端
-   uv run python app/test_client.py
+   uv run python app/trade --port 10001
    ```
+
+4. 另开终端，运行调度 Agent（Orchestrator）：
+
    ```bash
-   #硬编码测试客户端
+   # 单 Server
    uv run python app/cli_agent.py
+
+   # 多 Server（货币 + 交易）
+   A2A_SERVER_URLS=http://localhost:10000,http://localhost:10001 uv run python app/cli_agent.py
    ```
 
 ### Orchestrator Agent（调度 Agent）
@@ -121,28 +126,55 @@ TOOL_LLM_NAME=deepseek-v4-flash
 ```
 用户 (CLI)  ←→  Orchestrator Agent (LLM 驱动)
                      │ 通过 A2A 协议 + JSON-RPC
-                     ↓
-              Currency Agent Server  (app/__main__.py)
+                     ├── Currency Agent Server  (app/__main__.py — 端口 10000)
+                     └── Trade Agent Server     (app/trade/ — 端口 10001)
 ```
 
 其工作流程：
 
-1. 启动时通过 `A2ACardResolver` 拉取远程 Server 的 **Agent Card**，自动发现其能力（名称、描述、技能列表、支持的输入输出格式）
-2. 将 Agent Card 中的能力描述注入 LLM 的 system prompt
-3. 注册一个 Tool `call_a2a_agent`，负责将自然语言包装为 A2A JSON-RPC 请求发给远程 Server
-4. 在 CLI 中与用户自然语言交互，判断请求是否匹配远程 Agent 的能力范围，智能决定是否调度
+1. 启动时通过 `A2ACardResolver` 拉取**所有远程 Server 的 Agent Card**，自动发现其能力（名称、描述、技能列表、支持的输入输出格式）
+2. 将所有 Agent Card 的原始 JSON 直接注入 LLM 的 system prompt，LLM 自行读取卡中字段来决定调度
+3. 注册一个 Tool `call_a2a_agent(server_url, query)`，负责将自然语言包装为 A2A JSON-RPC 请求发给对应 Server
+4. 在 CLI 中与用户自然语言交互，LLM 根据 Agent Card 信息判断请求匹配哪个远程 Agent，智能调度
 
 启动方式：
 
 ```bash
-# 默认连接 http://localhost:10000
+# 单 Server（默认 http://localhost:10000）
 uv run python app/cli_agent.py
 
-# 指定远程 A2A Server 地址
-A2A_SERVER_URL=http://localhost:8080 uv run python app/cli_agent.py
+# 多 Server（逗号分隔）
+A2A_SERVER_URLS=http://localhost:10000,http://localhost:10001 uv run python app/cli_agent.py
 ```
 
-> 该调度 Agent 和 Server 使用相同环境变量（`model_source` / `GOOGLE_API_KEY` / `TOOL_LLM_URL` / `TOOL_LLM_NAME` / `API_KEY`）。
+> 该调度 Agent 和所有 Server 使用相同环境变量（`model_source` / `GOOGLE_API_KEY` / `TOOL_LLM_URL` / `TOOL_LLM_NAME` / `API_KEY`）。
+
+## Trade Agent（模拟交易 Agent）
+
+`app/trade/` 是一个独立的 A2A Agent Server，提供**模拟股票交易**功能：
+
+- **查看行情**：获取 AAPL、GOOGL、TSLA 等股票的模拟实时价格
+- **投资组合**：查看持仓与账户余额
+- **下单交易**：模拟买入/卖出操作，含资金与持仓校验
+- **订单历史**：查看过往交易记录
+- **模拟入金**：为测试账户补充模拟资金
+
+所有数据均为进程级内存模拟，重启即重置。
+
+启动方式：
+
+```bash
+# 默认端口 10001
+uv run python app/trade
+
+# 自定义端口
+uv run python app/trade --port 10001
+
+# 自定义主机
+uv run python app/trade --host 0.0.0.0 --port 10001
+```
+
+> 与 Orchestrator 配合使用时，将 Trade Agent 地址加入 `A2A_SERVER_URLS` 即可。
 
 ## 构建容器镜像
 
