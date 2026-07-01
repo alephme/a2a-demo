@@ -95,10 +95,15 @@ def _build_system_prompt(cards: list[AgentCard]) -> str:
 # 主流程
 # ---------------------------------------------------------------------------
 
+def _normalize_url(url: str) -> str:
+    """去掉尾部斜杠，确保 URL 匹配一致。"""
+    return url.rstrip('/')
+
+
 def _parse_server_urls() -> list[str]:
     """解析 A2A_SERVER_URLS（逗号分隔）或向后兼容 A2A_SERVER_URL。"""
     urls_str = os.getenv('A2A_SERVER_URLS') or os.getenv('A2A_SERVER_URL', 'http://localhost:10000')
-    return [u.strip() for u in urls_str.split(',') if u.strip()]
+    return [_normalize_url(u.strip()) for u in urls_str.split(',') if u.strip()]
 
 
 async def main():
@@ -116,6 +121,7 @@ async def main():
                 resolver = A2ACardResolver(httpx_client=httpx_client, base_url=url)
                 card = await resolver.get_agent_card()
                 cards.append(card)
+                # 使用标准化后的 URL 作为 key
                 clients[url] = A2AClient(httpx_client=httpx_client, agent_card=card)
                 logger.info("Connected to '%s' (%s) — %s", card.name, url, card.description)
             except Exception as e:
@@ -141,12 +147,14 @@ async def main():
             """
             nonlocal _mt_state
 
-            client = clients.get(server_url)
+            # 标准化 URL（Agent Card 可能带尾部斜杠，clients dict key 不带）
+            normalized = _normalize_url(server_url)
+            client = clients.get(normalized)
             if client is None:
                 return f"[ERROR] Unknown server URL: {server_url}"
 
             # 初始化/恢复多轮上下文
-            state = _mt_state.setdefault(server_url, {"task_id": None, "context_id": None})
+            state = _mt_state.setdefault(normalized, {"task_id": None, "context_id": None})
 
             payload: dict[str, Any] = {
                 "message": {
@@ -180,7 +188,7 @@ async def main():
                                 if part.root.kind == "text":
                                     texts.append(part.root.text)
                 # 重置多轮状态
-                _mt_state[server_url] = {"task_id": None, "context_id": None}
+                _mt_state[normalized] = {"task_id": None, "context_id": None}
                 return "\n".join(texts) if texts else "(empty response)"
 
             if task_state == "input-required":
@@ -192,7 +200,7 @@ async def main():
                 return f"[INFO_NEEDED] {question.strip()}"
 
             if task_state == "failed":
-                _mt_state[server_url] = {"task_id": None, "context_id": None}
+                _mt_state[normalized] = {"task_id": None, "context_id": None}
                 error_msg = ""
                 if result.status.message:
                     for part in result.status.message.parts:

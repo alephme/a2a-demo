@@ -1,53 +1,58 @@
-# LangGraph Currency Agent with A2A Protocol
+# A2A 多 Agent 协作演示
 
-基于 Google [A2A](https://github.com/google/A2A) 示例改造的货币兑换智能体，使用 [LangGraph](https://langchain-ai.github.io/langgraph/) 构建，支持多轮对话与流式响应。兼容 **gemini** 与 **DeepSeek** 等 OpenAI API 格式的 LLM 服务。
+基于 Google [A2A](https://github.com/google/A2A) 协议构建的多 Agent 协作演示项目，使用 [LangGraph](https://langchain-ai.github.io/langgraph/) + ReAct 模式。包含一个通用 **Orchestrator Agent**（调度 Agent）通过 Agent Card 自动发现并调度多个 A2A Server。兼容 **Gemini** 与 **DeepSeek** 等 OpenAI API 格式的 LLM 服务。
 
-## 工作流程
+## 架构概览
 
-本智能体采用 LangGraph ReAct 模式，结合 LLM 调用 Frankfurter API 获取实时汇率，通过 A2A 协议对外提供标准化服务。
+```
+用户 (CLI)
+    │
+    ▼
+Orchestrator Agent (LLM 驱动)
+    │       通过 A2A 协议 + JSON-RPC
+    ├──► Currency Agent Server  (端口 10000)  ──► Frankfurter API
+    └──► Trade Agent Server     (端口 10001)  ──► 模拟数据
+```
 
 ```mermaid
 sequenceDiagram
-    participant Client as A2A Client
-    participant Server as A2A Server
-    participant Agent as LangGraph Agent
-    participant API as Frankfurter API
+    participant User as 👤 用户 (CLI)
+    participant Orch as 🧠 Orchestrator Agent
+    participant CurA as 💱 Currency Agent
+    participant TradeA as 📈 Trade Agent
+    participant FrankAPI as 🌐 Frankfurter API
 
-    Client->>Server: Send task with currency query
-    Server->>Agent: Forward query to currency agent
+    User->>Orch: "10 USD 等于多少 CNY？"
+    Note over Orch: LLM 读取 Agent Card<br/>匹配 Currency Agent
+    Orch->>CurA: A2A JSON-RPC 请求
+    CurA->>FrankAPI: get_exchange_rate
+    FrankAPI-->>CurA: 汇率数据
+    CurA-->>Orch: 换算结果
+    Orch-->>User: "10 USD ≈ 72.3 CNY"
 
-    alt Complete Information
-        Agent->>API: Call get_exchange_rate tool
-        API->>Agent: Return exchange rate data
-        Agent->>Server: Process data & return result
-        Server->>Client: Respond with currency information
-    else Incomplete Information
-        Agent->>Server: Request additional input
-        Server->>Client: Set state to "input-required"
-        Client->>Server: Send additional information
-        Server->>Agent: Forward additional info
-        Agent->>API: Call get_exchange_rate tool
-        API->>Agent: Return exchange rate data
-        Agent->>Server: Process data & return result
-        Server->>Client: Respond with currency information
-    end
+    User->>Orch: "帮我看看 TSLA 的股价"
+    Note over Orch: LLM 匹配 Trade Agent
+    Orch->>TradeA: A2A JSON-RPC 请求
+    Note over TradeA: 模拟价格 ±3% 波动
+    TradeA-->>Orch: TSLA $240.60
+    Orch-->>User: "TSLA 模拟价格 $240.60"
 
-    alt With Streaming
-        Note over Client,Server: Real-time status updates
-        Server->>Client: "Looking up exchange rates..."
-        Server->>Client: "Processing exchange rates..."
-        Server->>Client: Final result
-    end
+    User->>Orch: "买入 10 股 AAPL"
+    Orch->>TradeA: A2A JSON-RPC 下单请求
+    TradeA-->>Orch: 订单确认 #ORD000001
+    Orch-->>User: "✅ 已买入 10 股 AAPL"
 ```
 
 ## 主要特性
 
-- **多轮对话**：信息不足时可主动向用户追问
+- **通用调度 Agent**：Orchestrator 通过 Agent Card 自动发现远端 Agent 能力，LLM 智能决策调度
+- **多轮对话**：信息不足时可主动向用户追问，支持跨轮次上下文保持
 - **实时流式响应**：处理过程中提供状态更新
-- **推送通知**：支持基于 Webhook 的异步通知
 - **对话记忆**：跨交互保持上下文
-- **货币汇率工具**：集成 Frankfurter API 获取实时汇率
 - **多模型支持**：兼容 Google Gemini / DeepSeek / OpenAI 等多种 LLM
+- **货币汇率工具**：集成 Frankfurter API 获取实时汇率（Currency Agent）
+- **模拟股票交易**：模拟行情、持仓管理、下单交易、订单历史（Trade Agent）
+- **多 Server 扩展**：通过 `A2A_SERVER_URLS` 接入任意数量的 A2A Server
 
 ## 前置条件
 
@@ -81,6 +86,12 @@ API_KEY=your_api_key_here
 TOOL_LLM_URL=https://api.deepseek.com
 # 模型名称，例如：
 TOOL_LLM_NAME=deepseek-v4-flash
+
+# ============================================
+# Orchestrator Agent 要连接的 A2A Server 列表
+# 逗号分隔多个地址，不设则默认连接 http://localhost:10000
+# ============================================
+A2A_SERVER_URLS=http://localhost:10000,http://localhost:10001
 ```
 
 ## 快速启动
@@ -208,7 +219,8 @@ podman run -p 10000:10000 --env-file .env langgraph-a2a-server
 ## 局限性
 
 - 仅支持文本输入/输出（不支持多模态）
-- 使用 Frankfurter API，支持的币种有限
+- Currency Agent 使用 Frankfurter API，支持的币种有限
+- Trade Agent 所有行情与交易均为**内存模拟**，重启即重置；不支持真实行情与券商接口
 - 对话记忆基于会话，服务重启后不持久化
 
 ## API 调用示例
