@@ -11,7 +11,8 @@
 Orchestrator Agent (LLM 驱动)
     │       通过 A2A 协议 + JSON-RPC
     ├──► Currency Agent Server  (端口 10000)  ──► Frankfurter API
-    └──► Trade Agent Server     (端口 10001)  ──► 模拟数据
+    ├──► Trade Agent Server     (端口 10001)  ──► Yahoo Finance
+    └──► Shopping Agent Server  (端口 10002)  ──► LLM 内置知识
 ```
 
 ```mermaid
@@ -20,7 +21,9 @@ sequenceDiagram
     participant Orch as 🧠 Orchestrator Agent
     participant CurA as 💱 Currency Agent
     participant TradeA as 📈 Trade Agent
+    participant ShopA as 🛒 Shopping Agent
     participant FrankAPI as 🌐 Frankfurter API
+    participant Yahoo as 📊 Yahoo Finance
 
     User->>Orch: "10 USD 等于多少 CNY？"
     Note over Orch: LLM 读取 Agent Card<br/>匹配 Currency Agent
@@ -30,17 +33,20 @@ sequenceDiagram
     CurA-->>Orch: 换算结果
     Orch-->>User: "10 USD ≈ 72.3 CNY"
 
-    User->>Orch: "帮我看看 TSLA 的股价"
+    User->>Orch: "TSLA 股价多少？"
     Note over Orch: LLM 匹配 Trade Agent
     Orch->>TradeA: A2A JSON-RPC 请求
-    Note over TradeA: 模拟价格 ±3% 波动
+    TradeA->>Yahoo: yfinance 实时行情
+    Yahoo-->>TradeA: $240.60
     TradeA-->>Orch: TSLA $240.60
-    Orch-->>User: "TSLA 模拟价格 $240.60"
+    Orch-->>User: "TSLA 实时价格 $240.60"
 
-    User->>Orch: "买入 10 股 AAPL"
-    Orch->>TradeA: A2A JSON-RPC 下单请求
-    TradeA-->>Orch: 订单确认 #ORD000001
-    Orch-->>User: "✅ 已买入 10 股 AAPL"
+    User->>Orch: "推荐 200 元以下的足球鞋"
+    Note over Orch: LLM 匹配 Shopping Agent
+    Orch->>ShopA: A2A JSON-RPC 请求
+    Note over ShopA: LLM 从训练数据生成推荐<br/>含价格 + 购买链接
+    ShopA-->>Orch: 3~5 款商品推荐
+    Orch-->>User: "推荐 Nike/Adidas…<br/>¥169~¥199 京东链接"
 ```
 
 ## 主要特性
@@ -51,7 +57,8 @@ sequenceDiagram
 - **对话记忆**：跨交互保持上下文
 - **多模型支持**：兼容 Google Gemini / DeepSeek / OpenAI 等多种 LLM
 - **货币汇率工具**：集成 Frankfurter API 获取实时汇率（Currency Agent）
-- **模拟股票交易**：模拟行情、持仓管理、下单交易、订单历史（Trade Agent）
+- **实时股票交易**：通过 Yahoo Finance 获取真实行情，支持搜索、持仓管理、模拟下单（Trade Agent）
+- **LLM 商品推荐**：利用 LLM 训练数据直接生成商品推荐，含价格、描述、购买链接（Shopping Agent）
 - **多 Server 扩展**：通过 `A2A_SERVER_URLS` 接入任意数量的 A2A Server
 
 ## 前置条件
@@ -91,7 +98,7 @@ TOOL_LLM_NAME=deepseek-v4-flash
 # Orchestrator Agent 要连接的 A2A Server 列表
 # 逗号分隔多个地址，不设则默认连接 http://localhost:10000
 # ============================================
-A2A_SERVER_URLS=http://localhost:10000,http://localhost:10001
+A2A_SERVER_URLS=http://localhost:10000,http://localhost:10001,http://localhost:10002
 ```
 
 ## 快速启动
@@ -114,20 +121,27 @@ A2A_SERVER_URLS=http://localhost:10000,http://localhost:10001
    uv run app --host 0.0.0.0 --port 8080
    ```
 
-3. （可选）启动模拟交易 Agent（默认端口 10001）：
+3. （可选）启动股票交易 Agent（默认端口 10001）：
 
    ```bash
    uv run python app/trade --port 10001
    ```
 
-4. 另开终端，运行调度 Agent（Orchestrator）：
+4. （可选）启动购物推荐 Agent（默认端口 10002）：
 
    ```bash
-   # 单 Server
+   uv run python app/shop --port 10002
+   ```
+
+5. 另开终端，运行调度 Agent（Orchestrator）：
+
+   ```bash
+   # 单 Server（默认 http://localhost:10000）
    uv run python app/cli_agent.py
 
-   # 多 Server（货币 + 交易）
-   A2A_SERVER_URLS=http://localhost:10000,http://localhost:10001 uv run python app/cli_agent.py
+   # 多 Server（货币 + 交易 + 购物）
+   # 或直接在 .env 中设置 A2A_SERVER_URLS
+   A2A_SERVER_URLS=http://localhost:10000,http://localhost:10001,http://localhost:10002 uv run python app/cli_agent.py
    ```
 
 ### Orchestrator Agent（调度 Agent）
@@ -138,7 +152,8 @@ A2A_SERVER_URLS=http://localhost:10000,http://localhost:10001
 用户 (CLI)  ←→  Orchestrator Agent (LLM 驱动)
                      │ 通过 A2A 协议 + JSON-RPC
                      ├── Currency Agent Server  (app/__main__.py — 端口 10000)
-                     └── Trade Agent Server     (app/trade/ — 端口 10001)
+                     ├── Trade Agent Server     (app/trade/ — 端口 10001)
+                     └── Shopping Agent Server  (app/shop/ — 端口 10002)
 ```
 
 其工作流程：
@@ -148,44 +163,42 @@ A2A_SERVER_URLS=http://localhost:10000,http://localhost:10001
 3. 注册一个 Tool `call_a2a_agent(server_url, query)`，负责将自然语言包装为 A2A JSON-RPC 请求发给对应 Server
 4. 在 CLI 中与用户自然语言交互，LLM 根据 Agent Card 信息判断请求匹配哪个远程 Agent，智能调度
 
-启动方式：
-
-```bash
-# 单 Server（默认 http://localhost:10000）
-uv run python app/cli_agent.py
-
-# 多 Server（逗号分隔）
-A2A_SERVER_URLS=http://localhost:10000,http://localhost:10001 uv run python app/cli_agent.py
-```
-
 > 该调度 Agent 和所有 Server 使用相同环境变量（`model_source` / `GOOGLE_API_KEY` / `TOOL_LLM_URL` / `TOOL_LLM_NAME` / `API_KEY`）。
 
-## Trade Agent（模拟交易 Agent）
+## Trade Agent（股票交易 Agent）
 
-`app/trade/` 是一个独立的 A2A Agent Server，提供**模拟股票交易**功能：
+`app/trade/` 是一个独立的 A2A Agent Server，通过 **Yahoo Finance** 获取真实行情：
 
-- **查看行情**：获取 AAPL、GOOGL、TSLA 等股票的模拟实时价格
-- **投资组合**：查看持仓与账户余额
-- **下单交易**：模拟买入/卖出操作，含资金与持仓校验
+- **实时行情**：通过 yfinance 获取美股真实价格（如 AAPL、TSLA、NVDA）
+- **股票搜索**：按关键词搜索匹配的股票代码
+- **投资组合**：查看持仓与账户余额（按实时价格计算市值）
+- **模拟下单**：模拟买入/卖出，含资金与持仓校验
 - **订单历史**：查看过往交易记录
-- **模拟入金**：为测试账户补充模拟资金
+- **模拟入金**：为模拟账户补充资金
 
-所有数据均为进程级内存模拟，重启即重置。
+> 行情为真实数据，账户与订单为进程级内存模拟，重启即重置。
 
 启动方式：
 
 ```bash
-# 默认端口 10001
-uv run python app/trade
-
-# 自定义端口
 uv run python app/trade --port 10001
-
-# 自定义主机
-uv run python app/trade --host 0.0.0.0 --port 10001
 ```
 
-> 与 Orchestrator 配合使用时，将 Trade Agent 地址加入 `A2A_SERVER_URLS` 即可。
+## Shopping Agent（商品推荐 Agent）
+
+`app/shop/` 利用 LLM 训练数据直接生成商品推荐，无需外接商品数据库：
+
+- **LLM 驱动推荐**：LLM 根据用户的自然语言需求（如"200元以下的足球鞋"）从训练数据中提取真实商品信息
+- **含购买链接**：每款推荐附带京东搜索链接，可直接打开购买
+- **中国市场定价**：价格切合 2025~2026 年中国市场实际参考价
+
+> 商品信息来自 LLM 训练数据（截至其知识截止日期），仅供参考。
+
+启动方式：
+
+```bash
+uv run python app/shop --port 10002
+```
 
 ## 构建容器镜像
 
@@ -220,7 +233,8 @@ podman run -p 10000:10000 --env-file .env langgraph-a2a-server
 
 - 仅支持文本输入/输出（不支持多模态）
 - Currency Agent 使用 Frankfurter API，支持的币种有限
-- Trade Agent 所有行情与交易均为**内存模拟**，重启即重置；不支持真实行情与券商接口
+- Trade Agent 行情来自 Yahoo Finance（免费 API，有频率限制）；账户与订单为内存模拟，重启即重置
+- Shopping Agent 商品信息来自 LLM 训练数据，价格可能存在时效偏差，仅供参考
 - 对话记忆基于会话，服务重启后不持久化
 
 ## API 调用示例

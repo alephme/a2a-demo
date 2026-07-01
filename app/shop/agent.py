@@ -1,4 +1,4 @@
-"""TradeAgent — 使用 LangGraph 构建的模拟交易智能体。"""
+"""ShoppingAgent — 使用 LLM 内置知识进行商品推荐的智能体。"""
 
 import json
 import os
@@ -12,26 +12,34 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
-from app.trade import tools as trade_tools
+from app.shop import tools as shop_tools
 
 
 memory = MemorySaver()
 
 SYSTEM_INSTRUCTION = (
-    "You are a stock trading assistant. You help users with paper trading using real market prices from Yahoo Finance.\n\n"
+    "You are a professional shopping assistant. "
+    "Your job is to recommend products to users based on their needs.\n\n"
     "Available operations:\n"
-    "1. Get real-time market prices for any US stock (e.g., AAPL, TSLA, NVDA)\n"
-    "2. Search for stocks by keyword (e.g., 'AI', 'semiconductor')\n"
-    "3. View portfolio and account balance\n"
-    "4. Place buy/sell orders (simulated — no real money involved)\n"
-    "5. View order history\n"
-    "6. Deposit simulated funds\n\n"
-    "Stock prices are real-time from Yahoo Finance. Account balance and orders are simulated.\n\n"
+    "1. Search and recommend products based on user requirements\n\n"
+    "When the user asks for product recommendations, ALWAYS use the "
+    "'search_products' tool. The tool will tell you what the user needs, "
+    "and you must use your training knowledge to generate specific product "
+    "recommendations as a JSON array.\n\n"
+    "Important rules for product recommendations:\n"
+    "- Recommend 3~5 real products that match the query\n"
+    "- Prices should reflect 2025~2026 China market reality\n"
+    "- Prefer well-known brands and popular models\n"
+    "- Include JD.com search links so users can purchase\n"
+    "- If the user has a budget, strictly follow it\n"
+    "- If the user's request is not about product shopping, "
+    "politely state you only help with product recommendations\n\n"
     "When responding, you MUST output a JSON object with exactly two fields:\n"
     '- "status": one of "completed" (task done), '
     '"input_required" (need more info), or "error" (something went wrong)\n'
-    '- "message": your response text\n\n'
-    'Example: {"status": "completed", "message": "AAPL (Apple Inc.) real-time price: $182.30."}'
+    '- "message": your response text, containing the product recommendations '
+    "in a clear, readable format with prices, descriptions, and purchase links\n\n"
+    'Example: {"status": "completed", "message": "为您推荐以下足球鞋：\\n1. ..."}'
 )
 
 
@@ -45,22 +53,16 @@ def _create_llm():
             model=os.getenv("TOOL_LLM_NAME"),
             openai_api_key=os.getenv("API_KEY", "EMPTY"),
             openai_api_base=os.getenv("TOOL_LLM_URL"),
-            temperature=0,
+            temperature=0.3,  # 稍微高一点温度，让推荐更多样
         )
 
 
-class TradeAgent:
-    """TradeAgent — 模拟交易助手。"""
+class ShoppingAgent:
+    """ShoppingAgent — 商品推荐助手。"""
 
     def __init__(self):
-        # 将 tools.py 中的函数注册为 LangChain tool
         self.tools = [
-            tool(trade_tools.get_market_price),
-            tool(trade_tools.view_portfolio),
-            tool(trade_tools.place_order),
-            tool(trade_tools.view_order_history),
-            tool(trade_tools.deposit),
-            tool(trade_tools.search_stocks),
+            tool(shop_tools.search_products),
         ]
         self.model = _create_llm()
         self.graph = create_react_agent(
@@ -70,8 +72,10 @@ class TradeAgent:
             prompt=SYSTEM_INSTRUCTION,
         )
 
-    async def stream(self, query: str, context_id: str) -> AsyncIterable[dict[str, Any]]:
-        """流式处理用户查询，产出状态更新与最终结果。"""
+    async def stream(
+        self, query: str, context_id: str
+    ) -> AsyncIterable[dict[str, Any]]:
+        """流式处理用户查询。"""
         inputs = {"messages": [("user", query)]}
         config = {"configurable": {"thread_id": context_id}}
 
@@ -85,13 +89,13 @@ class TradeAgent:
                 yield {
                     "is_task_complete": False,
                     "require_user_input": False,
-                    "content": "Processing your trading request...",
+                    "content": "正在为您搜索商品...",
                 }
             elif isinstance(message, ToolMessage):
                 yield {
                     "is_task_complete": False,
                     "require_user_input": False,
-                    "content": "Executing order...",
+                    "content": "正在整理推荐结果...",
                 }
 
         yield self._get_final_response(config)
@@ -131,7 +135,7 @@ class TradeAgent:
         return {
             "is_task_complete": True,
             "require_user_input": False,
-            "content": "Unable to process your request at the moment.",
+            "content": "抱歉，暂时无法处理您的请求。",
         }
 
     SUPPORTED_CONTENT_TYPES = ["text", "text/plain"]

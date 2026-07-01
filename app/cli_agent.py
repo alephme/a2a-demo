@@ -34,7 +34,7 @@ from langgraph.prebuilt import create_react_agent
 from a2a.client import A2ACardResolver, A2AClient
 from a2a.types import AgentCard, MessageSendParams, SendMessageRequest
 
-load_dotenv()
+load_dotenv(override=True)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

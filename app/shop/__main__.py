@@ -1,11 +1,12 @@
-"""Trade Agent Server — 模拟交易 A2A Agent。
+"""Shopping Agent Server — LLM 商品推荐 A2A Agent。
 
-通过 A2A 协议对外提供模拟股票交易服务。
+通过 A2A 协议对外提供商品搜索与推荐服务。Agent 使用 LLM 的训练数据
+直接生成商品推荐列表（含名称、价格、描述、购买链接）。
 
 用法：
-    uv run python app/trade [--host HOST] [--port PORT]
+    uv run python app/shop [--host HOST] [--port PORT]
 
-环境变量（与 app/__main__.py 完全一致）：
+环境变量（与其他 Server 完全一致）：
     model_source      模型来源：google | 其他
     GOOGLE_API_KEY    Google Gemini API Key
     API_KEY           OpenAI 兼容 API Key
@@ -31,8 +32,8 @@ from a2a.server.tasks import (
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 from dotenv import load_dotenv
 
-from app.trade.agent import TradeAgent
-from app.trade.agent_executor import TradeAgentExecutor
+from app.shop.agent import ShoppingAgent
+from app.shop.agent_executor import ShoppingAgentExecutor
 
 
 load_dotenv(override=True)
@@ -47,9 +48,9 @@ class MissingAPIKeyError(Exception):
 
 @click.command()
 @click.option("--host", "host", default="localhost")
-@click.option("--port", "port", default=10001)
+@click.option("--port", "port", default=10002)
 def main(host: str, port: int) -> None:
-    """Starts the Trade Agent server."""
+    """Starts the Shopping Agent server."""
     try:
         if os.getenv("model_source", "google") == "google":
             if not os.getenv("GOOGLE_API_KEY"):
@@ -68,39 +69,36 @@ def main(host: str, port: int) -> None:
 
         capabilities = AgentCapabilities(streaming=True, push_notifications=True)
         skill = AgentSkill(
-            id="stock_trading",
-            name="Stock Trading Assistant",
+            id="product_search",
+            name="Product Search & Recommend",
             description=(
-                "Real-time stock trading assistant using Yahoo Finance prices. "
-                "Supports checking real-time market prices, searching stocks, "
-                "viewing portfolio, placing simulated buy/sell orders, "
-                "viewing order history, and depositing simulated funds."
+                "Searches and recommends products based on user requirements. "
+                "Uses LLM knowledge to generate real product recommendations "
+                "with names, prices, descriptions, and purchase links."
             ),
             tags=[
-                "stock trading",
-                "market prices",
-                "portfolio management",
-                "real-time data",
+                "shopping",
+                "product search",
+                "recommendation",
+                "e-commerce",
             ],
             examples=[
-                "What is the price of AAPL?",
-                "Search for AI stocks",
-                "Buy 10 shares of TSLA",
-                "Show my portfolio",
-                "Sell 5 shares of MSFT",
+                "推荐 200 元以下的足球鞋，给出购买链接",
+                "推荐一款适合学生的笔记本电脑",
+                "有什么好的蓝牙耳机推荐？",
             ],
         )
         agent_card = AgentCard(
-            name="Trade Agent",
+            name="Shopping Agent",
             description=(
-                "A stock trading assistant. Provides real-time market prices "
-                "via Yahoo Finance, manages paper trading portfolios, and "
-                "executes simulated buy/sell orders."
+                "A shopping assistant that recommends products based on user "
+                "needs. Uses LLM knowledge to provide real product suggestions "
+                "with current market prices and purchase links."
             ),
             url=f"http://{host}:{port}/",
             version="1.0.0",
-            default_input_modes=TradeAgent.SUPPORTED_CONTENT_TYPES,
-            default_output_modes=TradeAgent.SUPPORTED_CONTENT_TYPES,
+            default_input_modes=ShoppingAgent.SUPPORTED_CONTENT_TYPES,
+            default_output_modes=ShoppingAgent.SUPPORTED_CONTENT_TYPES,
             capabilities=capabilities,
             skills=[skill],
         )
@@ -111,7 +109,7 @@ def main(host: str, port: int) -> None:
             httpx_client=httpx_client, config_store=push_config_store
         )
         request_handler = DefaultRequestHandler(
-            agent_executor=TradeAgentExecutor(),
+            agent_executor=ShoppingAgentExecutor(),
             task_store=InMemoryTaskStore(),
             push_config_store=push_config_store,
             push_sender=push_sender,
